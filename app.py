@@ -1,14 +1,12 @@
 import time
 import random
 import hashlib
+import html
 from datetime import datetime, timedelta
 
 import streamlit as st
-from openai import OpenAI
-
-# ✅ 추가 (복사 버튼용)
 import streamlit.components.v1 as components
-import html
+from openai import OpenAI
 
 # =========================================================
 # API KEY (Streamlit secrets 사용)
@@ -31,14 +29,12 @@ if "calls" not in st.session_state:
     st.session_state.calls = []
 if "cache" not in st.session_state:
     st.session_state.cache = {}  # key -> (expires_at, reading)
-
-# ✅ 추가 (복사 버튼에서 쓸 reading 저장)
 if "last_reading" not in st.session_state:
     st.session_state.last_reading = ""
 if "last_theme" not in st.session_state:
     st.session_state.last_theme = ""
 if "last_cards" not in st.session_state:
-    st.session_state.last_cards = None
+    st.session_state.last_cards = []
 
 # =========================================================
 # 배경
@@ -161,7 +157,7 @@ OPENING_STYLES = [
 ]
 
 # =========================================================
-# 🔮 프롬프트 (줄바꿈 OK / 문단 OK / 번호·불릿 금지)  ← 너 코드 그대로
+# 🔮 프롬프트 (줄바꿈 OK / 문단 OK / 번호·불릿 금지)
 # =========================================================
 SYSTEM_PROMPT = """
 너는 ‘미스틱 타로 마스터’다.
@@ -262,6 +258,50 @@ def call_model(question, cards):
         cleaned.append(s)
     return "\n".join(cleaned).strip()
 
+def render_reading_panel(reading: str):
+    # ✅ 문단 기준: 빈 줄(= \n\n) 기준으로 끊고, 문단 내부 줄바꿈은 <br>
+    parts = [p.strip() for p in reading.replace("\r\n", "\n").split("\n\n") if p.strip()]
+    p_html = []
+    for p in parts:
+        safe = html.escape(p).replace("\n", "<br>")
+        p_html.append(f"<p style='margin:0 0 16px 0;'>{safe}</p>")
+    return "<div class='panel'>" + "".join(p_html) + "</div>"
+
+def render_copy_button(reading: str):
+    # Streamlit 기본 버튼만으로는 클립보드 접근이 제한적이라 components로 처리
+    safe_text = html.escape(reading).replace("\\", "\\\\").replace("`", "\\`")
+    # JS에서 실제 텍스트를 복사할 때는 escape된 걸 되돌릴 필요가 없어서
+    # 안전하게 JSON.stringify로 전달
+    js = f"""
+    <div style="display:flex; justify-content:center; margin-top:12px; margin-bottom:4px;">
+      <button id="copybtn"
+        style="
+          padding:10px 14px;
+          border-radius:12px;
+          border:1px solid #d4af37;
+          background: rgba(44,0,62,0.85);
+          color:#f0e68c;
+          font-weight:700;
+          cursor:pointer;
+        ">📋 해석 복사하기</button>
+    </div>
+    <script>
+      const text = {html.escape(repr(reading))};
+      const btn = document.getElementById("copybtn");
+      btn.addEventListener("click", async () => {{
+        try {{
+          await navigator.clipboard.writeText(text);
+          btn.innerText = "✅ 복사 완료!";
+          setTimeout(() => btn.innerText = "📋 해석 복사하기", 1400);
+        }} catch(e) {{
+          btn.innerText = "⚠️ 복사 실패(브라우저 권한)";
+          setTimeout(() => btn.innerText = "📋 해석 복사하기", 1600);
+        }}
+      }});
+    </script>
+    """
+    components.html(js, height=70)
+
 # =========================================================
 # Streamlit UI
 # =========================================================
@@ -292,25 +332,27 @@ h1, h2, h3, p, div, span, label {{
   font-family: 'Nanum Myeongjo', serif;
 }}
 
-/* ✅ 모바일 제목 깨짐 방지: 반응형 폰트 + 줄바꿈 허용 + 가운데 */
 .title {{
   font-family: 'Cinzel', serif;
   text-align: center;
-  font-size: clamp(1.9rem, 6vw, 3rem);
-  line-height: 1.15;
+  font-size: 3rem;
+  line-height: 1.1;
   color: #f0e68c;
   text-shadow: 0 0 20px rgba(240,230,140,.8);
   margin: 10px 0 6px;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+  word-break: keep-all;   /* ✅ 모바일 한 글자 떼어짐 방지 */
 }}
+.title .emoji {{
+  display: inline-block;
+  margin-right: 8px;
+}}
+
 .sub {{
   text-align: center;
   color: #f0e68c;
   margin-bottom: 10px;
   opacity: .95;
 }}
-
 .panel {{
   margin-top: 18px;
   padding: 20px;
@@ -318,16 +360,15 @@ h1, h2, h3, p, div, span, label {{
   border: 2px solid #d4af37;
   background: rgba(20,0,40,.85);
   line-height: 1.95;
-
-  /* ✅ 줄바꿈/가독성: Streamlit에서 안정적으로 */
-  white-space: pre-wrap;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-
   color: #e0d4fc;
   box-shadow: 0 0 30px rgba(106,13,173,.35);
 }}
-
+.cards {{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}}
 .card {{
   height: 220px;
   border-radius: 16px;
@@ -346,28 +387,37 @@ h1, h2, h3, p, div, span, label {{
 .name {{ font-size: 15px; font-weight:700; color:#fff; }}
 .dir {{ font-size: 13px; color:#f0e68c; opacity:.85; }}
 
-/* ✅ 모바일 카드 크기/배치 조절 */
-@media (max-width: 480px){{
-  .card {{
-    height: 140px;
-    border-radius: 14px;
-  }}
-  .icon {{ font-size: 28px; }}
-  .pos  {{ font-size: 11px; }}
-  .name {{ font-size: 11px; line-height: 1.15; }}
-  .dir  {{ font-size: 11px; }}
-}}
-
 .small {{
   margin-top: 14px;
   font-size: 12px;
   opacity: .7;
   text-align: center;
 }}
+
+/* ✅ 모바일 최적화 */
+@media (max-width: 520px) {{
+  .title {{
+    font-size: 2.05rem;   /* ✅ 제목 깨짐 방지 */
+    line-height: 1.12;
+    letter-spacing: -0.2px;
+  }}
+  .cards {{
+    grid-template-columns: 1fr; /* ✅ 카드 1열 */
+  }}
+  .card {{
+    height: 180px;        /* ✅ 카드 높이 줄이기 */
+    gap: 4px;
+  }}
+  .icon {{ font-size: 40px; }}
+  .panel {{
+    padding: 16px;
+    line-height: 1.85;
+  }}
+}}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="title">🔮 미스틱 AI 타로관</div>', unsafe_allow_html=True)
+st.markdown('<div class="title"><span class="emoji">🔮</span><span>미스틱 AI 타로관</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="sub">달빛 아래, 네 마음의 결을 읽어줄게.</div>', unsafe_allow_html=True)
 
 question = st.text_input("질문", placeholder="지금 가장 마음에 남아 있는 질문은?", max_chars=220)
@@ -403,78 +453,35 @@ if st.button("세 장 뽑기"):
 
         theme = classify_question(question)["theme"]
 
-        # ✅ 결과를 세션에 저장 (복사 버튼용)
+        # ✅ 결과 저장(복사 버튼에서 사용)
         st.session_state.last_reading = reading
         st.session_state.last_theme = theme
         st.session_state.last_cards = cards
 
-# ✅ 결과 표시(버튼 누른 뒤에도 유지)
-if st.session_state.last_cards:
+# ✅ 결과가 있을 때만 렌더
+if st.session_state.last_reading:
     st.markdown(f"<div class='sub'>오늘의 기운: {st.session_state.last_theme}</div>", unsafe_allow_html=True)
 
     icons = ["☾", "☀︎", "⭐︎"]
-    cols = st.columns(3)
-    for i, col in enumerate(cols):
-        c = st.session_state.last_cards[i]
-        with col:
-            st.markdown(f"""
-            <div class="card">
-              <div class="icon">{icons[i]}</div>
-              <div class="pos">{c['pos']}</div>
-              <div class="name">{c['name']}</div>
-              <div class="dir">{c['dir_kr']}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    cards = st.session_state.last_cards
 
-    # ✅ 모바일에서도 문단/줄바꿈이 무조건 보이도록 <p>로 강제 렌더링
-raw = st.session_state.last_reading or ""
-paras = raw.split("\n\n")  # 문단 기준
-
-p_html_list = []
-for p in paras:
-    # 문단 내부 단일 개행은 <br>로 유지
-    safe = html.escape(p).replace("\n", "<br>")
-    p_html_list.append(f"<p style='margin:0 0 14px 0;'>{safe}</p>")
-
-panel_html = "<div class='panel'>" + "".join(p_html_list) + "</div>"
-st.markdown(panel_html, unsafe_allow_html=True)
-
-
-    # ✅ 해석 복사하기 버튼 (클립보드)
-    safe_text = html.escape(st.session_state.last_reading or "").replace("\n", "\\n")
-    components.html(
-        f"""
-        <div style="display:flex; justify-content:center; margin-top:12px; margin-bottom:2px;">
-          <button id="copyBtn"
-            style="
-              padding:10px 14px;
-              border-radius:12px;
-              border:1px solid #d4af37;
-              background: rgba(44,0,62,0.85);
-              color:#f0e68c;
-              font-weight:700;
-              cursor:pointer;
-            ">
-            📋 해석 복사하기
-          </button>
+    cards_html = ['<div class="cards">']
+    for i, c in enumerate(cards):
+        cards_html.append(f"""
+        <div class="card">
+          <div class="icon">{icons[i]}</div>
+          <div class="pos">{html.escape(c['pos'])}</div>
+          <div class="name">{html.escape(c['name'])}</div>
+          <div class="dir">{html.escape(c['dir_kr'])}</div>
         </div>
+        """)
+    cards_html.append("</div>")
+    st.markdown("".join(cards_html), unsafe_allow_html=True)
 
-        <script>
-          const text = `{safe_text}`;
-          const btn = document.getElementById("copyBtn");
-          btn.addEventListener("click", async () => {{
-            try {{
-              await navigator.clipboard.writeText(text.replace(/\\n/g, "\\n"));
-              btn.innerText = "✅ 복사 완료!";
-              setTimeout(() => btn.innerText = "📋 해석 복사하기", 1400);
-            }} catch (e) {{
-              btn.innerText = "⚠️ 복사 실패(브라우저 권한)";
-              setTimeout(() => btn.innerText = "📋 해석 복사하기", 1600);
-            }}
-          }});
-        </script>
-        """,
-        height=70,
-    )
+    # ✅ 문단 줄바꿈 확실하게
+    st.markdown(render_reading_panel(st.session_state.last_reading), unsafe_allow_html=True)
+
+    # ✅ 복사 버튼
+    render_copy_button(st.session_state.last_reading)
 
 st.markdown('<div class="small">※ 재미/성찰용입니다. 중요한 결정(의료/법률/투자 등)은 전문가 상담을 고려하세요.</div>', unsafe_allow_html=True)
