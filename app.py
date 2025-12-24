@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 import streamlit as st
 from openai import OpenAI
 
+# ✅ 추가 (복사 버튼용)
+import streamlit.components.v1 as components
+import html
+
 # =========================================================
 # API KEY (Streamlit secrets 사용)
 # =========================================================
@@ -27,6 +31,14 @@ if "calls" not in st.session_state:
     st.session_state.calls = []
 if "cache" not in st.session_state:
     st.session_state.cache = {}  # key -> (expires_at, reading)
+
+# ✅ 추가 (복사 버튼에서 쓸 reading 저장)
+if "last_reading" not in st.session_state:
+    st.session_state.last_reading = ""
+if "last_theme" not in st.session_state:
+    st.session_state.last_theme = ""
+if "last_cards" not in st.session_state:
+    st.session_state.last_cards = None
 
 # =========================================================
 # 배경
@@ -279,13 +291,18 @@ st.markdown(f"""
 h1, h2, h3, p, div, span, label {{
   font-family: 'Nanum Myeongjo', serif;
 }}
+
+/* ✅ 모바일 제목 깨짐 방지: 반응형 폰트 + 줄바꿈 허용 + 가운데 */
 .title {{
   font-family: 'Cinzel', serif;
   text-align: center;
-  font-size: 3rem;
+  font-size: clamp(1.9rem, 6vw, 3rem);
+  line-height: 1.15;
   color: #f0e68c;
   text-shadow: 0 0 20px rgba(240,230,140,.8);
   margin: 10px 0 6px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }}
 .sub {{
   text-align: center;
@@ -293,6 +310,7 @@ h1, h2, h3, p, div, span, label {{
   margin-bottom: 10px;
   opacity: .95;
 }}
+
 .panel {{
   margin-top: 18px;
   padding: 20px;
@@ -300,10 +318,16 @@ h1, h2, h3, p, div, span, label {{
   border: 2px solid #d4af37;
   background: rgba(20,0,40,.85);
   line-height: 1.95;
+
+  /* ✅ 줄바꿈/가독성: Streamlit에서 안정적으로 */
   white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+
   color: #e0d4fc;
   box-shadow: 0 0 30px rgba(106,13,173,.35);
 }}
+
 .card {{
   height: 220px;
   border-radius: 16px;
@@ -321,6 +345,19 @@ h1, h2, h3, p, div, span, label {{
 .pos {{ font-size: 13px; color: #f0e68c; opacity:.95; font-weight:700; }}
 .name {{ font-size: 15px; font-weight:700; color:#fff; }}
 .dir {{ font-size: 13px; color:#f0e68c; opacity:.85; }}
+
+/* ✅ 모바일 카드 크기/배치 조절 */
+@media (max-width: 480px){{
+  .card {{
+    height: 140px;
+    border-radius: 14px;
+  }}
+  .icon {{ font-size: 28px; }}
+  .pos  {{ font-size: 11px; }}
+  .name {{ font-size: 11px; line-height: 1.15; }}
+  .dir  {{ font-size: 11px; }}
+}}
+
 .small {{
   margin-top: 14px;
   font-size: 12px;
@@ -365,24 +402,69 @@ if st.button("세 장 뽑기"):
             st.session_state.cache[key] = (now + timedelta(seconds=CACHE_TTL_SECONDS), reading)
 
         theme = classify_question(question)["theme"]
-        st.markdown(f"<div class='sub'>오늘의 기운: {theme}</div>", unsafe_allow_html=True)
 
-        icons = ["☾", "☀︎", "⭐︎"]
-        cols = st.columns(3)
-        for i, col in enumerate(cols):
-            c = cards[i]
-            with col:
-                st.markdown(f"""
-                <div class="card">
-                  <div class="icon">{icons[i]}</div>
-                  <div class="pos">{c['pos']}</div>
-                  <div class="name">{c['name']}</div>
-                  <div class="dir">{c['dir_kr']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+        # ✅ 결과를 세션에 저장 (복사 버튼용)
+        st.session_state.last_reading = reading
+        st.session_state.last_theme = theme
+        st.session_state.last_cards = cards
 
-        formatted = reading.replace("\n\n", "<br><br>").replace("\n", "<br>")
-        st.markdown(f"<div class='panel'>{formatted}</div>", unsafe_allow_html=True)
+# ✅ 결과 표시(버튼 누른 뒤에도 유지)
+if st.session_state.last_cards:
+    st.markdown(f"<div class='sub'>오늘의 기운: {st.session_state.last_theme}</div>", unsafe_allow_html=True)
 
+    icons = ["☾", "☀︎", "⭐︎"]
+    cols = st.columns(3)
+    for i, col in enumerate(cols):
+        c = st.session_state.last_cards[i]
+        with col:
+            st.markdown(f"""
+            <div class="card">
+              <div class="icon">{icons[i]}</div>
+              <div class="pos">{c['pos']}</div>
+              <div class="name">{c['name']}</div>
+              <div class="dir">{c['dir_kr']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ✅ 줄바꿈은 CSS(pre-wrap)로 처리하므로, HTML <br> 변환 안 해도 됨
+    # (기존 formatted 방식은 Streamlit에서 케이스에 따라 줄바꿈이 “한 덩어리”로 보일 수 있음)
+    st.markdown(f"<div class='panel'>{html.escape(st.session_state.last_reading)}</div>", unsafe_allow_html=True)
+
+    # ✅ 해석 복사하기 버튼 (클립보드)
+    safe_text = html.escape(st.session_state.last_reading or "").replace("\n", "\\n")
+    components.html(
+        f"""
+        <div style="display:flex; justify-content:center; margin-top:12px; margin-bottom:2px;">
+          <button id="copyBtn"
+            style="
+              padding:10px 14px;
+              border-radius:12px;
+              border:1px solid #d4af37;
+              background: rgba(44,0,62,0.85);
+              color:#f0e68c;
+              font-weight:700;
+              cursor:pointer;
+            ">
+            📋 해석 복사하기
+          </button>
+        </div>
+
+        <script>
+          const text = `{safe_text}`;
+          const btn = document.getElementById("copyBtn");
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText(text.replace(/\\n/g, "\\n"));
+              btn.innerText = "✅ 복사 완료!";
+              setTimeout(() => btn.innerText = "📋 해석 복사하기", 1400);
+            }} catch (e) {{
+              btn.innerText = "⚠️ 복사 실패(브라우저 권한)";
+              setTimeout(() => btn.innerText = "📋 해석 복사하기", 1600);
+            }}
+          }});
+        </script>
+        """,
+        height=70,
+    )
 
 st.markdown('<div class="small">※ 재미/성찰용입니다. 중요한 결정(의료/법률/투자 등)은 전문가 상담을 고려하세요.</div>', unsafe_allow_html=True)
