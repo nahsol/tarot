@@ -381,6 +381,8 @@ if st.button("세 장 뽑기"):
                 </div>
                 """, unsafe_allow_html=True)
 
-        st.markdown(f"<div class='panel'>{reading}</div>", unsafe_allow_html=True)
+        formatted = reading.replace("\n\n", "<br><br>").replace("\n", "<br>")
+        st.markdown(f"<div class='panel'>{formatted}</div>", unsafe_allow_html=True)
+
 
 st.markdown('<div class="small">※ 재미/성찰용입니다. 중요한 결정(의료/법률/투자 등)은 전문가 상담을 고려하세요.</div>', unsafe_allow_html=True)
