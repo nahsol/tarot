@@ -426,9 +426,19 @@ if st.session_state.last_cards:
             </div>
             """, unsafe_allow_html=True)
 
-    # ✅ 줄바꿈은 CSS(pre-wrap)로 처리하므로, HTML <br> 변환 안 해도 됨
-    # (기존 formatted 방식은 Streamlit에서 케이스에 따라 줄바꿈이 “한 덩어리”로 보일 수 있음)
-    st.markdown(f"<div class='panel'>{html.escape(st.session_state.last_reading)}</div>", unsafe_allow_html=True)
+    # ✅ 모바일에서도 문단/줄바꿈이 무조건 보이도록 <p>로 강제 렌더링
+raw = st.session_state.last_reading or ""
+paras = raw.split("\n\n")  # 문단 기준
+
+p_html_list = []
+for p in paras:
+    # 문단 내부 단일 개행은 <br>로 유지
+    safe = html.escape(p).replace("\n", "<br>")
+    p_html_list.append(f"<p style='margin:0 0 14px 0;'>{safe}</p>")
+
+panel_html = "<div class='panel'>" + "".join(p_html_list) + "</div>"
+st.markdown(panel_html, unsafe_allow_html=True)
+
 
     # ✅ 해석 복사하기 버튼 (클립보드)
     safe_text = html.escape(st.session_state.last_reading or "").replace("\n", "\\n")
